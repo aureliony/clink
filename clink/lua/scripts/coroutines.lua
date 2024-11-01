@@ -149,7 +149,7 @@ end
 --------------------------------------------------------------------------------
 local function cancel_coroutine(message)
     clink._cancel_coroutine()
-    error((message or "").."canceling popenyield; coroutine is orphaned")
+    -- error((message or "").."canceling popenyield; coroutine is orphaned")
 end
 
 --------------------------------------------------------------------------------
