@@ -1,4 +1,4 @@
-// Copyright (c) 2023 Martin Ridgers
+// Copyright (c) 2023 Christopher Antos
 // License: http://opensource.org/licenses/MIT
 
 #include "pch.h"
@@ -11,9 +11,9 @@ extern "C" uint32 clink_wcswidth(const char* s, uint32 len)
 {
     uint32 count = 0;
 
-    wcwidth_iter inner_iter(s, len);
-    while (inner_iter.next())
-        count += inner_iter.character_wcwidth_onectrl();
+    wcwidth_iter iter(s, len);
+    while (iter.next())
+        count += iter.character_wcwidth_onectrl();
 
     return count;
 }
@@ -23,9 +23,9 @@ extern "C" uint32 clink_wcswidth_expandctrl(const char* s, uint32 len)
 {
     uint32 count = 0;
 
-    wcwidth_iter inner_iter(s, len);
-    while (inner_iter.next())
-        count += inner_iter.character_wcwidth_twoctrl();
+    wcwidth_iter iter(s, len);
+    while (iter.next())
+        count += iter.character_wcwidth_twoctrl();
 
     return count;
 }
@@ -55,6 +55,7 @@ wcwidth_iter::wcwidth_iter(const wcwidth_iter& i)
 , m_chr_ptr(i.m_chr_ptr)
 , m_chr_end(i.m_chr_end)
 , m_chr_wcwidth(i.m_chr_wcwidth)
+, m_emoji(i.m_emoji)
 {
 }
 
@@ -73,6 +74,7 @@ wcwidth_iter::wcwidth_iter(const wcwidth_iter& i)
 char32_t wcwidth_iter::next()
 {
     m_chr_ptr = m_chr_end;
+    m_emoji = false;
 
     const char32_t c = m_next;
 
@@ -101,6 +103,7 @@ char32_t wcwidth_iter::next()
         // Check for a country flag sequence.
         if (c >= 0x1f1e6 && c <= 0x1f1ff && m_next >= 0x1f1e6 && m_next <= 0x1f1ff)
         {
+            m_emoji = true;
             m_chr_wcwidth = 2;
             m_chr_end = m_iter.get_pointer();
             m_next = m_iter.next();
@@ -108,16 +111,12 @@ char32_t wcwidth_iter::next()
         }
 
         // If it's an emoji character, then try to parse an emoji sequence.
-        if (is_emoji(c) || is_possible_unqualified_half_width(c))
+        const bool unq = is_possible_unqualified_half_width(c);
+        if (unq || is_emoji(c))
         {
-            // Within emoji sequences, combining marks have zero width.
-            combining_mark_width_scope cmwidth_emoji(0);
-
-            // FE0F or skin tone selector after an unqualified form makes it
+            // A variant selector after an unqualified form makes it
             // fully-qualified and be full width (2 cells).
-            if ((m_next == 0xfe0f || (m_next >= 0x1f3fb && m_next <= 0x1f3ff)) &&
-                m_chr_wcwidth > 0 &&
-                is_possible_unqualified_half_width(c))
+            if (unq && is_variant_selector(m_next))
             {
                 m_chr_end = m_iter.get_pointer();
 fully_qualified:
@@ -125,44 +124,25 @@ fully_qualified:
                 m_chr_wcwidth = max<char32_t>(m_chr_wcwidth, 2);
                 m_next = m_iter.next();
             }
-            else if (c == 0x303d)
+            else if (c == 0x3030 || c == 0x303d || c == 0x3297 || c == 0x3299)
             {
-                // Special case:  Windows Terminal renders unqualified 303D
-                // the same as fully-qualified 303D FE0F.
+                // Special cases:  Windows Terminal renders some unqualified
+                // emoji the same as their fully-qualified forms.
                 assert(m_chr_wcwidth > 0);
                 goto fully_qualified;
             }
 
-            while (m_next)
-            {
-                if (m_next == 0xfe0f ||                         // color variant
-                    m_next >= 0x1f3fb && m_next <= 0x1f3ff)     // skin tone
-                {
-                    m_chr_end = m_iter.get_pointer();
-                    m_next = m_iter.next();
-                }
-                else if (m_next == 0x200d)
-                {
-                    m_chr_end = m_iter.get_pointer();
-                    m_next = m_iter.next();
-                    // ZWJ implies full width emoji (2 cells).
-                    assert(m_chr_wcwidth == 1 || m_chr_wcwidth == 2);
-                    m_chr_wcwidth = max<char32_t>(m_chr_wcwidth, 2);
-                    // Stop parsing if the next character is not an emoji.
-                    if (!is_emoji(m_next) &&
-                        !is_possible_unqualified_half_width(m_next) &&
-                        m_next != 0x2640 &&                     // woman
-                        m_next != 0x2642)                       // man
-                        break;
-                    // Accept the next emoji, and advance to continue with the
-                    // next character, to handle joiners and variants.
-                    m_chr_end = m_iter.get_pointer();
-                    m_next = m_iter.next();
-                }
-                else
-                    break;
-            }
+            // Consume the emoji sequence.
+emoji_sequence:
+            consume_emoji_sequence();
+            m_emoji = true;
             return c;
+        }
+        else if (is_variant_selector(c))
+        {
+            assert(m_chr_wcwidth == 1 || m_chr_wcwidth == 2);
+            m_chr_wcwidth = max<char32_t>(m_chr_wcwidth, 2);
+            goto emoji_sequence;
         }
     }
 
@@ -171,12 +151,62 @@ fully_qualified:
     {
         const int32 w = wcwidth(m_next);
         if (w != 0)
-            break;
+        {
+            // Variant selectors affect non-emoji as well, so treat them as
+            // zero width for continuation purposes, but make the width 2.
+            if (g_color_emoji && is_variant_selector(m_next))
+            {
+                assert(m_chr_wcwidth == 1 || m_chr_wcwidth == 2);
+                m_chr_wcwidth = max<char32_t>(m_chr_wcwidth, 2);
+                m_emoji = true; // These essentially make it an emoji, even if the base character isn't an emoji.
+            }
+            else
+                break;
+        }
         m_chr_end = m_iter.get_pointer();
         m_next = m_iter.next();
     }
 
     return c;
+}
+
+//------------------------------------------------------------------------------
+void wcwidth_iter::consume_emoji_sequence()
+{
+    // Within emoji sequences, combining marks have zero width.
+    combining_mark_width_scope cmwidth(0);
+
+    while (m_next)
+    {
+        if (is_variant_selector(m_next))
+        {
+            m_chr_end = m_iter.get_pointer();
+            m_next = m_iter.next();
+            // Variant selector implies full width emoji (2 cells).
+            assert(m_chr_wcwidth >= 0 && m_chr_wcwidth <= 2);
+            m_chr_wcwidth = max<char32_t>(m_chr_wcwidth, 2);
+        }
+        else if (m_next == 0x200d)
+        {
+            m_chr_end = m_iter.get_pointer();
+            m_next = m_iter.next();
+            // ZWJ implies full width emoji (2 cells).
+            assert(m_chr_wcwidth == 1 || m_chr_wcwidth == 2);
+            m_chr_wcwidth = max<char32_t>(m_chr_wcwidth, 2);
+            // Stop parsing if the next character is not an emoji.
+            if (!is_emoji(m_next) &&
+                !is_possible_unqualified_half_width(m_next) &&
+                m_next != 0x2640 &&                     // woman
+                m_next != 0x2642)                       // man
+                break;
+            // Accept the next emoji, and advance to continue with the next
+            // character, to handle joiners and variants.
+            m_chr_end = m_iter.get_pointer();
+            m_next = m_iter.next();
+        }
+        else
+            break;
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -198,6 +228,7 @@ void wcwidth_iter::reset_pointer(const char* s)
     m_iter.reset_pointer(s);
     m_chr_end = m_chr_ptr = s;
     m_chr_wcwidth = 0;
+    m_emoji = false;
     m_next = m_iter.next();
 }
 

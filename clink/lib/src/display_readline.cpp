@@ -75,9 +75,13 @@ extern int rl_get_forced_display(void);
 extern void rl_set_forced_display(int force);
 
 extern int _rl_last_v_pos;
-extern int _rl_rprompt_shown_len;
-
+int _rl_rprompt_shown_len = 0;
 } // extern "C"
+
+// rl_prompt is the right-justified prompt string, if any.  It is set by
+// rl_set_rprompt(), and should not be assigned to directly.
+char* rl_rprompt = nullptr;
+int32 rl_visible_rprompt_length = 0;
 
 #ifndef HANDLE_MULTIBYTE
 #error HANDLE_MULTIBYTE is required.
@@ -1400,6 +1404,7 @@ public:
     void                reset_rprompt_shown();
     void                display();
     void                set_history_expansions(history_expansion* list=nullptr);
+    void                force_comment_row(const char* text);
     void                measure(measure_columns& mc);
     bool                get_horz_offset(int32& bytes, int32& column) const;
     bool                has_comment_row() const;
@@ -1435,6 +1440,9 @@ private:
     HANDLE              m_horizpos_workaround = nullptr;
     bool                m_pending_wrap = false;
     const display_lines* m_pending_wrap_display = nullptr;
+
+    str_moveable        m_forced_comment_row;
+    int32               m_forced_comment_row_cursorpos = -1;
 };
 
 //------------------------------------------------------------------------------
@@ -1467,6 +1475,9 @@ void display_manager::clear()
 
     m_pending_wrap = false;
     m_pending_wrap_display = nullptr;
+
+    m_forced_comment_row.free();
+    m_forced_comment_row_cursorpos = -1;
 }
 
 //------------------------------------------------------------------------------
@@ -1958,10 +1969,18 @@ void display_manager::display()
     if (need_update && _rl_vis_botlin < _rl_screenheight && !g_display_manager_no_comment_row)
     {
         str_moveable in;
-        const input_hint* hint = get_input_hint();
+        if (m_forced_comment_row_cursorpos == rl_point)
+            in = m_forced_comment_row.c_str();
+        else
+        {
+            m_forced_comment_row.free();
+            m_forced_comment_row_cursorpos = -1;
+        }
+
+        const input_hint* hint = in.empty() ? get_input_hint() : nullptr;
         const int32 pos = hint ? hint->pos() : -1;
 
-        if (can_show_histexpand)
+        if (can_show_histexpand && in.empty())
         {
             const history_expansion* e;
             for (e = m_histexpand; e; e = e->next)
@@ -2141,6 +2160,17 @@ void display_manager::set_history_expansions(history_expansion* list)
 {
     history_free_expansions(&m_histexpand);
     m_histexpand = list;
+}
+
+//------------------------------------------------------------------------------
+void display_manager::force_comment_row(const char* text)
+{
+    if (text && *text)
+    {
+        m_forced_comment_row = text;
+        m_forced_comment_row_cursorpos = rl_point;
+        display();
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -2746,6 +2776,63 @@ extern "C" void _rl_refresh_line(void)
 }
 
 //------------------------------------------------------------------------------
+extern "C" void _rl_clear_to_eol(int32 count)
+{
+    if (_rl_last_v_pos == 0)
+    {
+        // If the cursor is on the first line of the input buffer, then flag
+        // that the right side prompt is not shown, so it can be redisplayed
+        // later as appropriate.
+        _rl_rprompt_shown_len = 0;
+    }
+
+    assert(_rl_term_clreol);
+    assert(*_rl_term_clreol);
+    tputs(_rl_term_clreol);
+}
+
+//------------------------------------------------------------------------------
+static char* expand_rprompt(const char* pmt)
+{
+    const uint32 l = str_len(pmt);
+    char* ret = (char*)xmalloc(l + 1);
+    bool newlines = false;
+
+    // Strip the invisible character string markers RL_PROMPT_START_IGNORE and
+    // RL_PROMPT_END_IGNORE.
+    char* r = ret;
+    for (const char* p = pmt; *p; ++p)
+    {
+        if (*p == '\r' || *p == '\n')
+            newlines = true;
+        if (*p != RL_PROMPT_START_IGNORE && *p != RL_PROMPT_END_IGNORE)
+            *(r++) = *p;
+    }
+    *r = '\0';
+
+    if (newlines)
+    {
+        free(ret);
+        ret = nullptr;
+    }
+
+    return ret;
+}
+
+//------------------------------------------------------------------------------
+void rl_set_rprompt(const char* rprompt)
+{
+    free(rl_rprompt);
+
+    if (rprompt && *rprompt)
+        rl_rprompt = expand_rprompt(rprompt);
+    else
+        rl_rprompt = nullptr;
+
+    rl_visible_rprompt_length = rl_rprompt ? cell_count(rl_rprompt) : 0;
+}
+
+//------------------------------------------------------------------------------
 void refresh_terminal_size()
 {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
@@ -2785,6 +2872,12 @@ void display_readline()
 void set_history_expansions(history_expansion* list)
 {
     s_display_manager.set_history_expansions(list);
+}
+
+//------------------------------------------------------------------------------
+void force_comment_row(const char* text)
+{
+    s_display_manager.force_comment_row(text);
 }
 
 //------------------------------------------------------------------------------

@@ -2,6 +2,19 @@
 
 ### Releases from [chrisant996/clink](https://github.com/chrisant996/clink) fork
 
+#### v1.7.6
+
+- Update Win8.1 character width measurements from [wcwidth-verifier](https://github.com/chrisant996/wcwidth-verifier).
+- Fixed [#709](https://github.com/chrisant996/clink/issues/709); TAB expansion doesn't work for `cd ~` (regression introduced in v1.3.36).
+
+#### v1.7.5
+
+- Added new Lua API [console.ellipsify()](#console.ellipsify) to truncate an input string in various ways.
+- Added new [rl_buffer:setcommentrow()](#rl_buffer:setcommentrow) to let [`"luafunc:"` commands](#luakeybindings) immediately show text in the comment row.
+- Adjusted some character width measurements based on analysis from [wcwidth-verifier](https://github.com/chrisant996/wcwidth-verifier) on Win8.1, Win10 with conhost, Win10 with Windows Terminal 1.22, Win11 with conhost, and Win11 with Windows Terminal 1.22.
+- The Headline, Pure, and Bureau clinkprompt files now consider unpublished branches as being "ahead", even in cases where git doesn't report a specific "ahead by" count.
+- Internal changes to the right side prompt implementation, to disentangle unnecessary internal dependencies.
+
 #### v1.7.4
 
 - Changed searching for color themes and custom prompts to always include `themes\` directories under the Clink program directory and Clink profile directory, even when the `clink.path` setting has been used to remove them from the list of script directories.
@@ -12,6 +25,7 @@
   - The zero width joiner is recognized when it joins two emoji characters, or an emoji and a male or female symbol.
   - **NOTE:**  A given OS version and terminal program version will only recognize certain combinations of joined emojis as valid sequences.  And Windows Terminal is one of the only terminal programs on Windows that can draw color emoji characters.  Clink has no way to know how a given terminal will actually render sequences of Unicode emoji characters.  If a terminal program renders a particular emoji sequence differently than Clink predicts, then the display may become garbled.  If that happens, don't use that emoji sequence.  But if a terminal program renders an emoji sequence as a single glyph and Clink predicts the width incorrectly, then please open an issue with details about the emoji.
 - The pure.clinkprompt now also supports virtualenv's `VIRTUAL_ENV_DISABLE_PROMPT` and `VIRTUAL_ENV_PROMPT` environment variables.
+- Added [console.cellcountiter()](#console.cellcountiter) so scripts can iterate over Unicode character sequences in a string.  Using `unicode.iter()` returns one codepoint at a time, but emojis can have multiple codepoints and `console.cellcountiter()` groups them together for easy processing and accurate overall width measures (measuring the width of each codepoint in an emoji sequence is not the same as measuring the width of the emoji sequence as a whole).
 - Fixed the right side transient prompt so it shows up even when identical to the right side normal prompt.
 - Fixed the `demo` callback in .clinkprompt files.
 - Fixed potential for incomplete input of Unicode surrogate pairs.  An easy way to encounter the problem was using the Windows emoji picker to input an emoji that's a sequence of other emojis joined together -- for example, the pride flag emoji is a flag emoji joined with a rainbow emoji, and the rainbow emoji uses a surrogate pair.
@@ -20,6 +34,7 @@
 - Fixed [#686](https://github.com/chrisant996/clink/issues/686); `clink config -h` shows inaccurate info.
 - Fixed [#696](https://github.com/chrisant996/clink/issues/696); console width length off-by-one on certain characters (in particular U+26A1).
 - Fixed [#698](https://github.com/chrisant996/clink/issues/698); script error when using `clink config prompt show pure`.
+- Fixed [#701](https://github.com/chrisant996/clink/issues/701); issues in Antares prompt (missing tag and error when truncation is needed).
 
 #### v1.7.3
 

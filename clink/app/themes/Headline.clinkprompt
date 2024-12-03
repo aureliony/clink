@@ -122,7 +122,7 @@ local function iif(expr, iftrue, iffalse)
     if expr then return iftrue else return iffalse end
 end
 
-local headline_git_branch, headline_git_status, _headline_part, ellipsify_left, sum, evalcmd
+local headline_git_branch, headline_git_status, _headline_part, ellipsify, sum, evalcmd
 local has24bitcolor = string.find(" winterminal wezterm winconsolev2 ", " "..clink.getansihost().." ") and true or false
 local only_ucs2 = (not string.find(" winterminal wezterm ", " "..clink.getansihost().." ")) and true or false
 
@@ -207,12 +207,13 @@ HEADLINE.GIT_AHEAD=HEADLINE.GIT_AHEAD or '↑'
 -- HEADLINE.GIT_DIVERGED=HEADLINE.GIT_DIVERGED or '↕'
 HEADLINE.GIT_STASHED=HEADLINE.GIT_STASHED or '*'
 HEADLINE.GIT_CONFLICTS=HEADLINE.GIT_CONFLICTS or '✘' -- consider "" or red..""
+HEADLINE.GIT_UNPUBLISHED=HEADLINE.GIT_UNPUBLISHED or '' -- consider ""
 HEADLINE.GIT_CLEAN=HEADLINE.GIT_CLEAN or '' -- consider "✓"
 
 -- Git status options
 HEADLINE.DO_GIT_STATUS_COUNTS=orwhennil(HEADLINE.DO_GIT_STATUS_COUNTS, false) -- set "true" to show count of each status
 HEADLINE.DO_GIT_STATUS_OMIT_ONE=orwhennil(HEADLINE.DO_GIT_STATUS_OMIT_ONE, false) -- set "true" to omit the status number when it is 1
-HEADLINE.STATUS_ORDER=HEADLINE.STATUS_ORDER or 'STAGED CHANGED UNTRACKED BEHIND AHEAD DIVERGED STASHED CONFLICTS'
+HEADLINE.STATUS_ORDER=HEADLINE.STATUS_ORDER or 'STAGED CHANGED UNTRACKED BEHIND AHEAD UNPUBLISHED DIVERGED STASHED CONFLICTS'
 
 -- Prompt (these can be strings or functions)
 HEADLINE.PROMPT=HEADLINE.PROMPT or function() return os.isuseradmin() and '# ' or '$ ' end
@@ -342,6 +343,16 @@ headline_git_status = function()
     totals.CHANGED=sum(status.working)
     totals.AHEAD=sum(status.ahead)
     totals.BEHIND=sum(status.behind)
+    totals.UNPUBLISHED=status.unpublished and "" -- Unpublished is a Boolean state; there's no count.
+
+    -- If there's no unpublished indicator and the branch is unpublished and
+    -- the ahead count is missing, then treat the unpublished state as a
+    -- special case of AHEAD.
+    if HEADLINE.GIT_UNPUBLISHED == "" and
+            status.unpublished and
+            (not totals.AHEAD or totals.AHEAD == 0) then
+        totals.AHEAD="" -- Make the indicator show up, but without a count.
+    end
 
     -- Check for stashes
     if git.hasstash() then
@@ -356,7 +367,7 @@ headline_git_status = function()
     local prefix
     local status_str=''
     for _,key in ipairs(order) do
-        if (totals[key] or 0) > 0 then
+        if type(totals[key]) == "string" or (totals[key] or 0) > 0 then
             if #HEADLINE.STATUS_TO_STATUS > 0 and #status_str > 0 then -- not first iteration
                 local style_joint=reset..HEADLINE.STYLE_DEFAULT..HEADLINE.STYLE_JOINT
                 local style_status=reset..HEADLINE.STYLE_DEFAULT..HEADLINE.STYLE_STATUS
@@ -437,7 +448,7 @@ local function headline_precmd()
         else
             len=len - console.cellcount(HEADLINE.PAD_TO_BRANCH)
         end
-        _headline_part("BRANCH", HEADLINE.BRANCH_PREFIX..ellipsify_left(branch_str, len), "right")
+        _headline_part("BRANCH", HEADLINE.BRANCH_PREFIX..ellipsify(branch_str, len, "left"), "right")
     end
 
 -- TODO!
@@ -486,7 +497,7 @@ local function headline_precmd()
         end
         len=_HEADLINE_LEN_REMAIN - console.cellcount(HEADLINE.PATH_PREFIX) - ((#branch_str > 0) and console.cellcount(HEADLINE.PATH_TO_BRANCH) or 0)
         len=len - console.cellcount(pushd_depth)
-        _headline_part("PATH", HEADLINE.PATH_PREFIX..pushd_depth..ellipsify_left(path_str, len), "left")
+        _headline_part("PATH", HEADLINE.PATH_PREFIX..pushd_depth..ellipsify(path_str, len, "path"), "left")
     end
 
     -- Padding
@@ -590,56 +601,11 @@ end
 -- BEGIN EXTENSIONS TO HEADLINE
 
 
-ellipsify_left=function(text, limit)
-    if console.cellcount(text) <= limit then
+ellipsify=function(text, limit, mode)
+    if not console.ellipsify then
         return text
     end
-    local trunc_width = console.cellcount(HEADLINE.TRUNC_PREFIX)
-    local keep = {}
-    local truncate = 0
-    local total = 0
-    local strings = console.explodeansi(text)
-    for i = #strings, 1, -1 do
-        local t = strings[i]
-        if t:byte() == 27 then
-            table.insert(keep, t)
-        else
-            local width = console.cellcount(t)
-            if total + width + trunc_width <= limit then
-                table.insert(keep, t)
-                total = total + width
-            else
-                local reverse = {}
-                for j in unicode.iter(t) do
-                    table.insert(reverse, j)
-                end
-                local s = ""
-                for j = #reverse, 1, -1 do
-                    local k = reverse[j]
-                    if total + trunc_width <= limit then
-                        truncate = #s
-                    end
-                    total = total + console.cellcount(k)
-                    if total > limit then
-                        s = s:sub(-truncate)
-                        s = HEADLINE.TRUNC_PREFIX..s
-                        break
-                    end
-                    s = k..s
-                end
-                table.insert(keep, s)
-            end
-        end
-    end
-    local reverse = {}
-    for i = #keep, 1, -1 do
-        local p = table.remove(keep, i)
-        if not p then
-            break
-        end
-        table.insert(reverse, p)
-    end
-    return table.concat(reverse)
+    return console.ellipsify(text, limit, mode, HEADLINE.TRUNC_PREFIX)
 end
 
 sum=function(list)

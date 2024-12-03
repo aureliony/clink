@@ -270,7 +270,7 @@ end
 
 --------------------------------------------------------------------------------
 local function output_character_ranges(out, tag, indexed, filtered)
-
+    -- Declaration.
     out:write("\nstatic const struct interval " .. tag .. "[] = {\n\n")
 
     -- Build sorted array of characters.
@@ -316,6 +316,7 @@ local function do_emojis()
     local file = io.open("clink/terminal/src/emoji-test.txt", "r")
     local filter = io.open("clink/terminal/src/emoji-filter.txt", "r")
     local fe0f = io.open("clink/terminal/src/emoji-fe0f.txt", "r")
+    local mono = io.open("clink/terminal/src/emoji-mono.txt", "r")
     out = io.open(out, "w")
 
     local header = {
@@ -331,6 +332,7 @@ local function do_emojis()
     local indexed = load_indexed_emoji_table(file)
     local filtered = load_indexed_emoji_table(filter)
     local possible_unqualified_half_width = load_indexed_emoji_table(fe0f)
+    local mono_emojis = load_indexed_emoji_table(mono)
     file:close()
     filter:close()
     fe0f:close()
@@ -338,13 +340,16 @@ local function do_emojis()
     -- Output ranges of double-width emoji characters.
     local emojis, count_ranges = output_character_ranges(out, "emojis", indexed, filtered)
 
+    -- Output ranges of double-width monochrome emoji characters.
+    output_character_ranges(out, "mono_emojis", mono_emojis)
+
     -- Output ranges of emoji characters which may be half-width if unqualified.
     local half_width = output_character_ranges(out, "possible_unqualified_half_width", possible_unqualified_half_width, nil)
 
     out:close()
 
     print("   " .. #emojis .. " emojis; " .. count_ranges .. " ranges")
-    print("   " .. #half_width .. " fully qualified double width emojis")
+    print("   " .. #half_width .. " possible unqualified half width emojis")
 end
 
 --------------------------------------------------------------------------------

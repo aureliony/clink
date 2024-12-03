@@ -5,30 +5,13 @@ _This todo list describes ChrisAnt996's current intended roadmap for Clink's fut
 # IMPROVEMENTS
 
 ## Mystery Issue
-There's some kind of case where `accept-line` doesn't print a newline before returning the input line to CMD.  Maybe somehow involving modmark.  I've hit it several times.
-
-Actually it almost looks like _after_ printing the transient prompt and `rl_crlf()`, something may have gotten a chance to force `clink.refilterprompt()` and print a normal prompt again out of turn, leaving the cursor at the end of that and thus output from the command began at that cursor position?  A command that I definitely only ran _once_ shows up in a transient prompt, immediately followed by a normal prompt plus input line, then followed by command output immediately at the end of the displayed input line.  But maybe the transient prompt is present because I hit UP then typed `value`, then hit CTRL-X,CTRL-R which prints transient prompt, then I hit UP again and typed `value` again and finally hit ENTER?
-
-    ```
-    > xx run -long_flags_that_make_command_wrap args -flags value
-
-     reponame  branchname ↓415  12345 14 hours ago             Tue 11:40
-    *> xx run -long_flags_that_make_command_wrap args -flags valueThis XX command is using the *XX Workflow* If you are testing changes in xx client code...
-    ```
-
-- Instrumentation seems to indicate it cannot hit `read_console()` again after the `rl_crlf()`, so on-idle coroutines shouldn't be involved.
-- Could some `onfoo` callback have forced `clink.refilterprompt()` out of turn?
-- Could this be a race condition versus `reset_stdio_handles()`?  Doesn't appear to be possible, since it goes through `hooked_fwrite`.
 
 ## High Priority
-- Expose a way to use `wcwidth_iter` from Lua.  For example, it could enable an input hinter that shows the Unicode codepoints at the cursor position.  It could also greatly simplify writing ellipsification code, and/or make ellipsification code more accurate (since summing `console.cellcount()` on individual codepoints in a string is _NOT_ the same as `console.cellcount()` on the string).
-- Add documentation about pros and cons of autorun, and how detection of "interactive session" has to work.
 
 ## Unit Tests
 
 ## Normal Priority
 - Randomly hit `assert(group == m_prev_group || group == m_catch_group);` upon `Ctrl-Space`.  It left input in a weird state with `clink-select-complete` still active but not handling input.  Could not repro again after I got out of the state.  It seems likely to be a long-standing issue in some obscure edge case.
-- Finish removing the RPROMPT stuff from Readline, moving it entirely into Clink code.  The only part of Readline that actually needs it is the stuff for clearing to the end of the line, which is mostly omitted now anyway.  Most of it can be moved easily, but one spot will need special consideration (maybe a callback?):  `_rl_erase_entire_line()` inside `_rl_internal_char_cleanup()`.
 - Event handler enhancements:
   - Allow setting an optional `priority` when registering event handlers?  So that scripts can control the precedence of `onbeginedit`, `onendedit`, and so on.
   - Allow adding a ONE-TIME event handler which automatically removes itself upon firing?  And `clink-diagnostics` would need to show any ONE-TIME event handlers until the next beginedit.
@@ -47,9 +30,6 @@ Actually it almost looks like _after_ printing the transient prompt and `rl_crlf
 - Consider plumbing `lua_State*` through all layers to help guarantee things don't accidentally cross from a coroutine into main?
 - Some wizard for interactively viewing/modifying color settings.  _[This is Low priority now that Clink supports .clinktheme color themes.]_
 - Make a reusable wrapper mechanism to create coroutine-friendly threaded async operations in Lua?
-
-## Follow Up
-- Push update to z.lua repo.
 
 ## Argmatcher syntax
 - See the argmatcher_syntax branch.
@@ -113,6 +93,18 @@ Actually it almost looks like _after_ printing the transient prompt and `rl_crlf
 - Lua code can check if there is real console input available, and can read real console input.  But there is no way for Lua code to check whether there is any input queued for Readline (pending input, pushed input, macro text).  That probably makes sense, since there is (correctly) no way for Lua code to read input queued for Readline.
 
 ## Mystery
+- There's some kind of case where `accept-line` doesn't print a newline before returning the input line to CMD.  Maybe somehow involving modmark.  I've hit it several times.  _[But it only happened for a few days and then stopped.  So I wonder if it was actually some kind of regression in Windows Terminal which got fixed.]_
+  - Maybe _after_ printing the transient prompt and `rl_crlf()`, something may have gotten a chance to force `clink.refilterprompt()` and print a normal prompt again out of turn, leaving the cursor at the end of that and thus output from the command began at that cursor position?  A command that I definitely only ran _once_ shows up in a transient prompt, immediately followed by a normal prompt plus input line, then followed by command output immediately at the end of the displayed input line.  But maybe the transient prompt is present because I hit UP then typed `value`, then hit CTRL-X,CTRL-R which prints transient prompt, then I hit UP again and typed `value` again and finally hit ENTER?
+    ```
+    > xx run -long_flags_that_make_command_wrap args -flags value
+
+     reponame  branchname ↓415  12345 14 hours ago             Tue 11:40
+    *> xx run -long_flags_that_make_command_wrap args -flags valueThis XX command is using the *XX Workflow* If you are testing changes in xx client code...
+    ```
+  - Instrumentation seems to indicate it cannot hit `read_console()` again after the `rl_crlf()`, so on-idle coroutines shouldn't be involved.
+  - Could some `onfoo` callback have forced `clink.refilterprompt()` out of turn?
+  - Could this be a race condition versus `reset_stdio_handles()`?  Doesn't appear to be possible, since it goes through `hooked_fwrite`.
+  - It only happened for a few days and then stopped, without any changes in Clink, so maybe the cause was external.
 - Once in a while raw mouse input sequences spuriously show up in the edit line; have only noticed it when the CMD window did not have focus at the time.  _[Not fixed by [bb870fc494](https://github.com/chrisant996/clink/commit/bb870fc49472a64bc1ea9194fe941a4948362d30).]_ _[Have not seen for many weeks.]_ _[Likely due to `ENABLE_VIRTUAL_TERMINAL_INPUT` and largely mitigated by [a8d80b752a](https://github.com/chrisant996/clink/commit/a8d80b752a3c4ff8660debeec0133a009fb04051).]_ _[Root cause is https://github.com/microsoft/terminal/issues/15711]_
 - Mouse input toggling is unreliable in Windows Terminal, and sometimes ends up disallowing mouse input.  _[Might be fixed by [bb870fc494](https://github.com/chrisant996/clink/commit/bb870fc49472a64bc1ea9194fe941a4948362d30)?]_
 - `"qq": "QQ"` in `.inputrc`, and then type `qa` --> infinite loop.  _[Was occurring in a 1.3.9 development build; but no longer repros in a later 1.3.9 build, and also does not repro in the 1.3.8 release build.]_

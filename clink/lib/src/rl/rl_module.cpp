@@ -1,4 +1,4 @@
-// Copyright (c) 2016 Martin Ridgers
+﻿// Copyright (c) 2016 Martin Ridgers
 // License: http://opensource.org/licenses/MIT
 
 #include "pch.h"
@@ -1456,6 +1456,8 @@ static char** alternative_matches(const char* text, int32 start, int32 end)
         just_tilde = !tmp.c_str()[1];
         if (!path::tilde_expand(tmp))
             just_tilde = false;
+        else if (just_tilde)
+            path::maybe_strip_last_separator(tmp);
     }
 
     // Expand an abbreviated path.
